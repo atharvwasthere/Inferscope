@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+asyncpg
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+tenacity
+redis[hiredis]
+boto3
+aioboto3
+google-genai
+groq
+alembic
+sqlalchemy
+psycopg2-binary
+tiktoken
