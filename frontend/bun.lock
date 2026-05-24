@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "lumino-frontend",
+      "name": "inferscope-frontend",
       "dependencies": {
         "@tanstack/react-query": "^5.51.0",
         "@tanstack/react-query-devtools": "^5.51.0",

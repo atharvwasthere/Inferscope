@@ -1,7 +1,7 @@
 /**
  * shadcn/ui chart primitive (JSX port).
  *
- * The evilcharts components and lumino's own chart wrappers render their
+ * The evilcharts components and inferscope's own chart wrappers render their
  * recharts trees inside <ChartContainer> and use <ChartTooltipContent> /
  * <ChartLegendContent>. This is the standard shadcn chart code, stripped of
  * TypeScript, so `bunx shadcn add @evilcharts/*` components drop in unchanged.

@@ -4,7 +4,7 @@
 /* ------------------------------------------------------------------ *
  * Tailwind v4 theme bridge.
  * Maps Tailwind color/radius utilities (used by the shadcn chart
- * primitive + evilcharts) onto the lumino runtime CSS variables below.
+ * primitive + evilcharts) onto the inferscope runtime CSS variables below.
  * ------------------------------------------------------------------ */
 @theme inline {
   --color-background: var(--bg-page);

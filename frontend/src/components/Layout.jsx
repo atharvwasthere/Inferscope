@@ -7,7 +7,7 @@ export default function Layout() {
     <>
       <nav className="nav">
         <NavLink to="/conversations" className="nav-brand">
-          <span className="mark">◎</span> lumino
+          <span className="mark">◎</span> inferscope
         </NavLink>
         <div className="nav-links">
           <NavLink to="/conversations" className={linkClass}>
