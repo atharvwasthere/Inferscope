@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: llmobs
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          # Reuses the chatbot image — it already ships alembic, alembic.ini,
+          # alembic/versions, and psycopg2-binary (the sync driver alembic uses).
+          image: atharv19/inferscope-chatbot:latest
+          imagePullPolicy: IfNotPresent
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: llmobs-config   # provides DATABASE_URL

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmobs-config
+  namespace: llmobs
+data:
+  DATABASE_URL: "postgresql://llmobs:llmobs@postgres:5432/llmobs"
+  INGESTION_URL: "http://ingestion:8081/ingest"
+  REDIS_URL: "redis://redis:6379"
+  AWS_REGION: "us-east-1"
+  # NOTE: GROQ_API_KEY / GOOGLE_API_KEY / AWS_* are secrets — see k8s/secret.yaml, not here.
