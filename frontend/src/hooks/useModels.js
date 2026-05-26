@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const BASE = import.meta.env.VITE_CHATBOT_URL;
+const BASE = "/api/chatbot";
 
 // Catalog rarely changes — fetch once per session, never auto-refetch.
 // Call queryClient.invalidateQueries(["models"]) explicitly if a model-management UI is added.

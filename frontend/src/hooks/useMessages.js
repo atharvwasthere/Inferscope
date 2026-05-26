@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const BASE = import.meta.env.VITE_CHATBOT_URL;
+const BASE = "/api/chatbot";
 
 export const useMessages = (id) =>
   useQuery({

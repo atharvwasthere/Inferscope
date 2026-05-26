@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const BASE = import.meta.env.VITE_DASHBOARD_URL;
+const BASE = "/api/dashboard";
 const f = (path) => fetch(`${BASE}${path}`).then((r) => r.json());
 
 export const useSummary = (i) =>

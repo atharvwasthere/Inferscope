@@ -6,7 +6,7 @@ import ProviderSelector from "../components/ProviderSelector.jsx";
 import { useMessages } from "../hooks/useMessages.js";
 import { useModels } from "../hooks/useModels.js";
 
-const CHATBOT_BASE = import.meta.env.VITE_CHATBOT_URL;
+const CHATBOT_BASE = "/api/chatbot";
 
 export default function Chat() {
   const { id } = useParams();
