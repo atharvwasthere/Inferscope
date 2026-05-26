@@ -54,6 +54,7 @@ inferscope/
 - [Event Bus design](./docs/EVENT_BUS.md) — why an event bus, Redis Streams + Postgres outbox
 - [PII handling](./docs/PII.md) — reversible tokenization (V1 → V2 → V3)
 - [Schema design](./docs/SCHEMA.md) — table decisions, indexes, OTel alignment
+- [Deployment](./DEPLOYMENT.md) — Docker Compose + self-hosted Kubernetes (k3s on Azure)
 
 ## Quick Start
 
@@ -74,7 +75,7 @@ docker compose up --build
 | dashboard | Python / FastAPI | asyncpg |
 | frontend | React 19 | Vite, TanStack Query v5, recharts |
 | database | PostgreSQL 16 | Alembic migrations |
-| infra | Docker Compose, Kubernetes (Minikube) | — |
+| infra | Docker Compose, Kubernetes (k3s) | Docker Hub registry, Azure VM (Ubuntu 24.04) |
 
 ## Schema Design Decisions
 
@@ -179,14 +180,19 @@ depends on.
 - Ingress with TLS on k8s instead of NodePort.
 - HPA on the ingestion service for burst traffic.
 
-## Running on Kubernetes (Minikube)
+## Deployment
+
+Two targets — local Docker Compose (above) and a self-hosted **k3s** cluster on an Azure VM
+(images via Docker Hub). Build/push with `make push`, deploy with `make deploy`:
 
 ```bash
-minikube start --driver=docker --cpus=4 --memory=6g
-eval $(minikube docker-env)
-make deploy
-# app available at $(minikube ip):30000
+make push      # build 4 images → Docker Hub (needs `docker login`)
+make deploy    # apply manifests to the k3s cluster (namespace → data → migrate Job → services)
+# app at http://<VM_PUBLIC_IP>:30000
 ```
+
+→ Full guide — Azure VM creation, k3s install, the five Minikube→cloud fixes, and the
+nginx reverse-proxy / 12-factor reasoning — in **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
 ## Environment Variables
 
