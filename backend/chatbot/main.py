@@ -23,7 +23,7 @@ from redis_bus.producer import RedisProducer
 from sdk.wrapper import LLMWrapper
 
 
-INGESTION_URL = os.environ.get("INGESTION_URL", "http://ingestion:8000/ingest")
+INGESTION_URL = os.environ.get("INGESTION_URL", "http://ingestion:8081/ingest")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "bedrock")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "anthropic.claude-sonnet-4-6")

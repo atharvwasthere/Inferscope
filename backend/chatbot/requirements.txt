@@ -7,8 +7,7 @@ python-dotenv
 httpx
 tenacity
 redis[hiredis]
-boto3
-aioboto3
+aioboto3>=12
 google-genai
 groq
 alembic

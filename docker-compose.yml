@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: llmobs
+      POSTGRES_PASSWORD: llmobs
+      POSTGRES_DB: llmobs
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmobs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ingestion:
+    build:
+      context: ./backend
+      dockerfile: ingestion/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file: backend/.env
+    # environment overrides env_file — use compose service names, not the localhost
+    # values in .env (those are for non-docker local runs).
+    environment:
+      DATABASE_URL: postgresql://llmobs:llmobs@postgres:5432/llmobs
+      REDIS_URL: redis://redis:6379
+      INGESTION_URL: http://ingestion:8081/ingest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chatbot:
+    build:
+      context: ./backend
+      dockerfile: chatbot/Dockerfile
+    ports:
+      - "8082:8082"
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://llmobs:llmobs@postgres:5432/llmobs
+      REDIS_URL: redis://redis:6379
+      INGESTION_URL: http://ingestion:8081/ingest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ingestion:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ./backend
+      dockerfile: dashboard/Dockerfile
+    ports:
+      - "8083:8083"
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://llmobs:llmobs@postgres:5432/llmobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - chatbot
+      - dashboard
+
+volumes:
+  postgres_data:
+  redis_data:
