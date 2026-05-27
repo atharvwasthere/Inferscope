@@ -55,6 +55,7 @@ inferscope/
 - [PII handling](./docs/PII.md) — reversible tokenization (V1 → V2 → V3)
 - [Schema design](./docs/SCHEMA.md) — table decisions, indexes, OTel alignment
 - [Deployment](./DEPLOYMENT.md) — Docker Compose + self-hosted Kubernetes (k3s on Azure)
+- [Azure deploy walkthrough](./docs/AZURE_DEPLOY.md) — the exact steps used to ship it live, gotchas included
 
 ## Quick Start
 
