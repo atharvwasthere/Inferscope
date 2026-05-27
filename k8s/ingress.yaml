@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: inferscope
+  namespace: llmobs
+spec:
+  # k3s ships Traefik as the default ingress controller, listening on the node's
+  # ports 80/443. This routes the public hostname to the frontend service, which
+  # serves the SPA and reverse-proxies /api/* to chatbot/dashboard (see frontend/nginx.conf).
+  ingressClassName: traefik
+  rules:
+    - host: inferscope.atharvsingh.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

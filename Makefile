@@ -43,6 +43,7 @@ deploy:
 	kubectl apply -f k8s/chatbot/
 	kubectl apply -f k8s/dashboard/
 	kubectl apply -f k8s/frontend/
+	kubectl apply -f k8s/ingress.yaml
 
 undeploy:
 	kubectl delete namespace llmobs
