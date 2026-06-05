@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from chatbot.abort_bus import RedisAbortBus, StreamRegistry
 from chatbot.db import close_pool, get_db, get_pool, get_provider_models, init_pool
 from chatbot.conversations import router as conversations_router
 from chatbot.services.chat_service import ChatService
@@ -35,6 +36,14 @@ configure_logging("chatbot")
 producer = RedisProducer(REDIS_URL, pool_getter=get_pool)
 wrapper = LLMWrapper(publisher=producer)
 
+# Stream-abort plumbing:
+#   - registry: per-process map of stream_id -> asyncio.Event (the generator polls it).
+#   - abort_bus: Redis pub/sub fan-out so /abort lands on any replica and the
+#     replica that owns the stream task flips its local event.
+# Wired together in lifespan(): abort_bus.start(registry.cancel).
+registry = StreamRegistry()
+abort_bus = RedisAbortBus(REDIS_URL)
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -54,6 +63,11 @@ async def lifespan(app: FastAPI):
     poller = OutboxPoller(get_pool, INGESTION_URL)
     tasks = [asyncio.create_task(worker.run()), asyncio.create_task(poller.run())]
 
+    # Start the abort subscriber: every replica listens on the shared channel and
+    # asks its local registry to cancel — the replica that doesn't own the stream
+    # no-ops.
+    await abort_bus.start(registry.cancel)
+
     yield
 
     for task in tasks:
@@ -63,6 +77,7 @@ async def lifespan(app: FastAPI):
             await task
     await worker.close()
     await poller.close()
+    await abort_bus.close()
     await producer.close()
     await close_pool()
 
@@ -104,7 +119,7 @@ async def models(db: asyncpg.Connection = Depends(get_db)) -> dict:
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest, db: asyncpg.Connection = Depends(get_db)) -> StreamingResponse:
-    service = ChatService(wrapper=wrapper, db=db)
+    service = ChatService(wrapper=wrapper, db=db, registry=registry)
     conversation_id, messages = await service.prepare(req.message, req.conversation_id, req.provider)
     return StreamingResponse(
         service.stream_tokens(conversation_id, messages, req.provider, req.model),
@@ -114,3 +129,13 @@ async def chat_stream(req: ChatRequest, db: asyncpg.Connection = Depends(get_db)
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/streams/{stream_id}/abort")
+async def abort_stream(stream_id: UUID) -> dict:
+    """Broadcast an abort for a running stream. Returns immediately; the
+    owner replica flips its local event and the generator breaks within a
+    token's worth of latency, then persists the partial reply and closes
+    the provider socket (so the provider stops generating/billing)."""
+    await abort_bus.publish(stream_id)
+    return {"stream_id": str(stream_id), "status": "abort_requested"}

@@ -69,7 +69,7 @@ async def update_conversation_title(db: asyncpg.Connection, conversation_id: UUI
 
 async def get_conversation(db: asyncpg.Connection, conversation_id: UUID) -> dict | None:
     row = await db.fetchrow(
-        "SELECT id, title, created_at, cancelled_at FROM conversations WHERE id = $1",
+        "SELECT id, title, created_at, closed_at FROM conversations WHERE id = $1",
         conversation_id,
     )
     return dict(row) if row else None
@@ -119,7 +119,7 @@ async def get_conversation_messages(db: asyncpg.Connection, conversation_id: UUI
 async def get_all_conversations(db: asyncpg.Connection) -> list[dict]:
     rows = await db.fetch(
         """
-        SELECT c.id, c.title, c.created_at, c.cancelled_at,
+        SELECT c.id, c.title, c.created_at, c.closed_at,
                COUNT(m.id) AS message_count
         FROM conversations c
         LEFT JOIN messages m ON m.conversation_id = c.id
@@ -130,9 +130,9 @@ async def get_all_conversations(db: asyncpg.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def mark_cancelled(db: asyncpg.Connection, conversation_id: UUID) -> dict | None:
+async def mark_closed(db: asyncpg.Connection, conversation_id: UUID) -> dict | None:
     row = await db.fetchrow(
-        "UPDATE conversations SET cancelled_at = NOW() WHERE id = $1 RETURNING id, cancelled_at",
+        "UPDATE conversations SET closed_at = NOW() WHERE id = $1 RETURNING id, closed_at",
         conversation_id,
     )
     return dict(row) if row else None
