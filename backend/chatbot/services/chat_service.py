@@ -2,12 +2,13 @@ import asyncio
 import json
 import logging
 import os
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import AsyncGenerator
 
 import asyncpg
 from fastapi import HTTPException
 
+from chatbot.abort_bus import StreamRegistry
 from chatbot.db import (
     create_conversation,
     get_conversation,
@@ -46,6 +47,7 @@ class ChatService:
         self,
         wrapper: LLMWrapper,
         db: asyncpg.Connection,
+        registry: StreamRegistry,
         system_prompt: str = SYSTEM_PROMPT_DEFAULT,
         max_turns: int = MAX_TURNS_DEFAULT,
         tokenizer: PiiTokenizer | None = None,
@@ -53,6 +55,7 @@ class ChatService:
     ) -> None:
         self.wrapper = wrapper
         self.db = db
+        self.registry = registry
         self.system_prompt = system_prompt
         self.max_turns = max_turns
         self.tokenizer = tokenizer or PiiTokenizer()
@@ -98,18 +101,59 @@ class ChatService:
         provider: str,
         model: str,
     ) -> AsyncGenerator[str, None]:
-        """SSE generator. Saves assistant reply in finally — survives client disconnect."""
-        yield self._sse("meta", {"conversation_id": str(conversation_id)})
+        """SSE generator. Mints a ``stream_id`` and registers an abort Event so a
+        cross-replica ``POST /streams/{stream_id}/abort`` can break the loop. Saves
+        whatever was streamed in ``finally`` — partial reply on abort, full on
+        completion."""
+        stream_id = uuid4()
+        abort_event = self.registry.register(stream_id)
+
+        yield self._sse(
+            "meta",
+            {"conversation_id": str(conversation_id), "stream_id": str(stream_id)},
+        )
 
         collected: list[str] = []
+        aborted = False
+        gen = None
         try:
             gen = await self.wrapper.chat(
                 messages, provider, model, session_id=conversation_id, stream=True
             )
-            async for token in gen:
+            ait = gen.__aiter__()
+
+            # Race each next-token against the abort signal: abort fires immediately,
+            # no token-grained polling lag.
+            while True:
+                next_task = asyncio.create_task(ait.__anext__())
+                abort_task = asyncio.create_task(abort_event.wait())
+                done, _ = await asyncio.wait(
+                    {next_task, abort_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if abort_task in done:
+                    next_task.cancel()
+                    aborted = True
+                    break
+
+                abort_task.cancel()
+                try:
+                    token = next_task.result()
+                except StopAsyncIteration:
+                    break
+
                 collected.append(token)
                 yield self._sse("message", {"text": token})
         finally:
+            # Close provider socket — stops the provider from generating (and billing)
+            # additional tokens once we've abandoned the stream.
+            if gen is not None:
+                try:
+                    await gen.aclose()
+                except Exception:
+                    pass
+            self.registry.unregister(stream_id)
+
             reply = "".join(collected)
             if reply:
                 await save_message(self.db, conversation_id, "assistant", reply)
@@ -118,7 +162,11 @@ class ChatService:
                 asyncio.create_task(
                     self._update_title(conversation_id, self._first_user_tokenized, reply)
                 )
-            yield self._sse("done", {"conversation_id": str(conversation_id), "status": "complete"})
+            status = "aborted" if aborted else "complete"
+            yield self._sse(
+                "done",
+                {"conversation_id": str(conversation_id), "status": status},
+            )
 
     async def _update_title(self, conversation_id: UUID, tokenized_user: str, assistant_reply: str) -> None:
         """Background task: generate a topic title and persist it. Never breaks the chat path."""
@@ -150,8 +198,8 @@ class ChatService:
         conv = await get_conversation(self.db, conversation_id)
         if conv is None:
             raise HTTPException(status_code=404, detail="conversation not found")
-        if conv["cancelled_at"] is not None:
-            raise HTTPException(status_code=409, detail="conversation is cancelled")
+        if conv["closed_at"] is not None:
+            raise HTTPException(status_code=409, detail="conversation is closed")
         return conversation_id
 
     def _build_messages(self, history: list[dict]) -> list[dict]:

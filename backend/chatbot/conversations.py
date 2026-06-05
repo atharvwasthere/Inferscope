@@ -7,7 +7,7 @@ from chatbot.db import (
     get_all_conversations,
     get_conversation_messages,
     get_db,
-    mark_cancelled,
+    mark_closed,
 )
 from sdk.pii_tokenizer import PiiTokenizer
 
@@ -25,7 +25,7 @@ async def list_conversations(db: asyncpg.Connection = Depends(get_db)) -> list[d
             "id": str(r["id"]),
             "title": r["title"],
             "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-            "cancelled": r["cancelled_at"] is not None,
+            "closed": r["closed_at"] is not None,
             "message_count": r["message_count"],
         }
         for r in rows
@@ -45,12 +45,14 @@ async def get_messages(conversation_id: UUID, db: asyncpg.Connection = Depends(g
     ]
 
 
-@router.patch("/{conversation_id}/cancel")
-async def cancel_conversation(conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)) -> dict:
-    result = await mark_cancelled(db, conversation_id)
+@router.patch("/{conversation_id}/close")
+async def close_conversation(conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)) -> dict:
+    """Soft-lock the conversation: future sends to this id return 409.
+    Does not abort an in-flight stream — use POST /streams/{stream_id}/abort for that."""
+    result = await mark_closed(db, conversation_id)
     if result is None:
         raise HTTPException(status_code=404, detail="conversation not found")
     return {
         "id": str(result["id"]),
-        "cancelled_at": result["cancelled_at"].isoformat(),
+        "closed_at": result["closed_at"].isoformat(),
     }
