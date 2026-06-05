@@ -32,11 +32,13 @@ Four core tables: `conversations`, `messages`, `inference_logs`, `provider_model
 
 ## OpenTelemetry alignment
 
-The inference log schema loosely follows
-[OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
-(`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.client.time_to_first_token`,
-etc.). This keeps the columns vendor-neutral and means the logs could feed an OTel collector later
-without renaming.
+The inference log schema borrows the vocabulary of
+[OpenTelemetry's GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+— token counts (`gen_ai.usage.input_tokens` / `output_tokens`), time-to-first-token
+(OTel's `gen_ai.server.time_to_first_token`), and reasoning/cache breakdowns. The columns use plain
+names (`input_tokens`, not the dotted OTel attribute key), so the schema is modeled *after* OTel, not
+emitting it — feeding an OTel collector later is a field-mapping at the export boundary, not a rename.
+The value is vendor-neutral column choices that follow where the ecosystem landed.
 
 ## Indexes
 

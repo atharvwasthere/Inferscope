@@ -23,7 +23,7 @@ frontend ──> chatbot ──> sdk/wrapper ──> LLM API (Bedrock / Gemini /
 
 The codebase follows SOLID principles and Clean Architecture boundaries. Each service uses the **Service/Repository pattern** — route handlers stay thin, a service layer orchestrates flow, and a repository layer (`db.py`) is the only place that touches SQL. Providers follow the **Provider pattern** behind a registry, so adding a model vendor is one dictionary entry and a new file, with zero changes to the wrapper.
 
-The inference log schema loosely follows [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.client.time_to_first_token`, etc.). Provider-native usage blocks are stored verbatim in a `raw_usage` JSONB column alongside the normalized canonical columns — so the schema never loses fidelity and never has to be migrated when a provider adds a new field.
+The inference log schema borrows the vocabulary of [OpenTelemetry's GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) — token counts (`gen_ai.usage.input_tokens` / `output_tokens`), time-to-first-token, reasoning/cache breakdowns. The columns aren't literally OTel-named (`input_tokens`, not the dotted attribute key), so it's modeled *after* OTel, not emitting it — mapping to a collector later is a boundary concern, not a migration. Provider-native usage blocks are stored verbatim in a `raw_usage` JSONB column alongside the normalized canonical columns — so the schema never loses fidelity and never has to be migrated when a provider adds a new field.
 
 ### Project layout
 
@@ -140,6 +140,11 @@ depends on.
 - *Decision:* a single asyncpg pool with `command_timeout=30` and `max_inactive_connection_lifetime=300`.
 - *Why:* one Postgres instance. Split pools only earn their keep with a read replica.
 - *Production:* read replica for dashboard reads, with separate pools pointing at primary (writes) and replica (reads). Stops dashboard scans from blocking ingestion writes.
+
+**Stream-abort signal: Redis pub/sub vs in-process dict**
+- *Decision:* Redis pub/sub channel `inferscope:stream:abort` with a per-replica `StreamRegistry` (`stream_id → asyncio.Event`).
+- *Why:* an in-process dict works on a single replica but silently breaks at N>1 — the `POST /streams/{id}/abort` can land on any pod, and only the pod that owns the generator task can cancel it. Pub/sub fans the signal to every replica; the owner flips its local event, the rest no-op. Redis is already a hard dependency (Streams for the event bus), so this is zero new infrastructure — pub/sub is a *different primitive on the same connection*. Streams would be the wrong choice for aborts (no value in persisting a "queue of unread cancellations" — if no replica owns the stream right now, the abort has nothing to do). The pattern keeps SOLID intact: `ChatService` depends on the `StreamRegistry` abstraction, `RedisAbortBus` is swappable for an in-memory bus in tests.
+- *Production:* same pattern up to several hundred concurrent streams per cluster. Beyond that, move to an edge gateway (Cloudflare AI Gateway / Vercel AI SDK pattern) that owns the SSE socket and converts client disconnect into an internal cancel RPC, so origin replicas stay dumb forwarders.
 
 **Dashboard queries: raw table vs rollup**
 - *Decision:* query raw `inference_logs` with an indexed `created_at`.
