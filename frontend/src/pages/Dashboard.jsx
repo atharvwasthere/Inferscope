@@ -18,7 +18,7 @@ import {
 
 const fmt = (n) => (n ?? 0).toLocaleString();
 const ms = (n) => `${Math.round(n ?? 0)}ms`;
-const usd = (n) => `$${Number(n ?? 0).toFixed(4)}`;
+const usd = (n) => `$${Number(n ?? 0).toFixed(6)}`;
 const short = (id) => (id ? id.slice(0, 8) : "—");
 
 function bannerStatus(rate) {

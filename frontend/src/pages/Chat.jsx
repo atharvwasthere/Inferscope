@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import MessageBubble from "../components/MessageBubble.jsx";
 import ProviderSelector from "../components/ProviderSelector.jsx";
+import { useAbortStream } from "../hooks/useAbortStream.js";
 import { useMessages } from "../hooks/useMessages.js";
 import { useModels } from "../hooks/useModels.js";
 
@@ -30,7 +31,9 @@ export default function Chat() {
   }, [models, provider]);
 
   const abortRef = useRef(null);
+  const streamIdRef = useRef(null);
   const scrollRef = useRef(null);
+  const abortStream = useAbortStream();
 
   // Seed from history when resuming an existing conversation.
   const { data: history } = useMessages(id);
@@ -53,7 +56,14 @@ export default function Chat() {
     setModel(m);
   };
 
+  // Cancel mid-stream: tell the server to stop generating (Redis pub/sub →
+  // owner replica flips its abort Event → provider socket closed → billing
+  // stops), then drop our SSE socket. Server-side abort first because the
+  // browser closing alone doesn't stop the provider from finishing the
+  // generation — the chatbot would keep reading bytes it discards.
   const cancel = () => {
+    const sid = streamIdRef.current;
+    if (sid) abortStream.mutate(sid);
     abortRef.current?.abort();
     setStreaming(false);
   };
@@ -106,6 +116,7 @@ export default function Chat() {
           const data = JSON.parse(dataStr);
 
           if (event === "meta" && data.conversation_id) {
+            if (data.stream_id) streamIdRef.current = data.stream_id;
             if (conversationId === "new") {
               setConversationId(data.conversation_id);
               window.history.replaceState(null, "", `/chat/${data.conversation_id}`);
@@ -148,6 +159,7 @@ export default function Chat() {
     } finally {
       setStreaming(false);
       abortRef.current = null;
+      streamIdRef.current = null;
     }
   };
 

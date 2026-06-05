@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 
 import { useConversations } from "../hooks/useConversations.js";
-import { useCancelConversation } from "../hooks/useCancelConversation.js";
+import { useCloseConversation } from "../hooks/useCloseConversation.js";
 
 function when(iso) {
   return iso ? new Date(iso).toLocaleString() : "";
@@ -10,7 +10,7 @@ function when(iso) {
 export default function Conversations() {
   const navigate = useNavigate();
   const { data, isLoading } = useConversations();
-  const cancel = useCancelConversation();
+  const close = useCloseConversation();
 
   const startNew = () => navigate("/chat/new");
 
@@ -43,8 +43,8 @@ export default function Conversations() {
     );
   }
 
-  // cancelled sorted to the bottom
-  const convos = [...data].sort((a, b) => Number(a.cancelled) - Number(b.cancelled));
+  // closed sorted to the bottom
+  const convos = [...data].sort((a, b) => Number(a.closed) - Number(b.closed));
 
   return (
     <div className="page">
@@ -57,14 +57,14 @@ export default function Conversations() {
 
       <div className="conv-list">
         {convos.map((c) => (
-          <div key={c.id} className={`conv-card ${c.cancelled ? "cancelled" : ""}`}>
+          <div key={c.id} className={`conv-card ${c.closed ? "closed" : ""}`}>
             <div className="conv-title">{c.title || "Untitled conversation"}</div>
             <div className="conv-foot">
               <span className="conv-time">{when(c.created_at)}</span>
               <span className="badge badge-muted">{c.message_count} msgs</span>
               <span className="spacer" />
-              {c.cancelled ? (
-                <span className="badge badge-muted">Cancelled</span>
+              {c.closed ? (
+                <span className="badge badge-muted">Closed</span>
               ) : (
                 <>
                   <button className="btn" onClick={() => navigate(`/chat/${c.id}`)}>
@@ -72,10 +72,10 @@ export default function Conversations() {
                   </button>
                   <button
                     className="btn"
-                    disabled={cancel.isPending}
-                    onClick={() => cancel.mutate(c.id)}
+                    disabled={close.isPending}
+                    onClick={() => close.mutate(c.id)}
                   >
-                    Cancel
+                    Close
                   </button>
                 </>
               )}
