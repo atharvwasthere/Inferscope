@@ -15,10 +15,10 @@ import httpx
 import redis.asyncio as redis
 from redis.exceptions import ResponseError
 
+from inferscope.delivery import DeliveryOutcome, deliver
 from inferscope.events import CONSUMER_GROUP, EVENT_FIELD, STREAM_KEY, InferenceEvent
 from inferscope.trace import set_trace_id
 from obs.log import get_logger, log_with
-from redis_bus.delivery import DeliveryOutcome, deliver
 
 logger = get_logger("redis_bus.consumer")
 

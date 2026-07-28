@@ -15,10 +15,10 @@ from collections.abc import Callable
 import asyncpg
 import httpx
 
+from inferscope.delivery import DeliveryOutcome, deliver
 from inferscope.trace import set_trace_id
 from obs.log import get_logger, log_with
 from redis_bus import outbox
-from redis_bus.delivery import DeliveryOutcome, deliver
 
 logger = get_logger("redis_bus.outbox_poller")
 
