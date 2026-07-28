@@ -40,7 +40,7 @@ def interval_to_sql(interval: str) -> tuple[str, str]:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await init_pool()
     yield
     await close_pool()

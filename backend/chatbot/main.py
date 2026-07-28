@@ -11,8 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from chatbot.abort_bus import RedisAbortBus, StreamRegistry
-from chatbot.db import close_pool, get_db, get_pool, get_provider_models, init_pool
 from chatbot.conversations import router as conversations_router
+from chatbot.db import close_pool, get_db, get_pool, get_provider_models, init_pool
 from chatbot.services.chat_service import ChatService
 from obs.log import configure_logging
 from obs.middleware import TraceIdMiddleware
@@ -22,7 +22,6 @@ from redis_bus.producer import RedisProducer
 
 # isolated import boundary — chatbot uses only sdk.wrapper
 from sdk.wrapper import LLMWrapper
-
 
 INGESTION_URL = os.environ.get("INGESTION_URL", "http://ingestion:8081/ingest")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
@@ -53,7 +52,7 @@ class ChatRequest(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await init_pool()
 
     # Two delivery drains, both reaching ingestion via redis_bus.delivery:
@@ -109,7 +108,7 @@ async def ready(db: asyncpg.Connection = Depends(get_db)) -> dict:
 
 @app.get("/models")
 async def models(db: asyncpg.Connection = Depends(get_db)) -> dict:
-    """Available models grouped by provider — sourced from provider_models (single source of truth)."""
+    """Available models grouped by provider — from provider_models (single source of truth)."""
     rows = await get_provider_models(db)
     grouped: dict[str, list[str]] = {}
     for r in rows:
@@ -118,9 +117,13 @@ async def models(db: asyncpg.Connection = Depends(get_db)) -> dict:
 
 
 @app.post("/chat/stream")
-async def chat_stream(req: ChatRequest, db: asyncpg.Connection = Depends(get_db)) -> StreamingResponse:
+async def chat_stream(
+    req: ChatRequest, db: asyncpg.Connection = Depends(get_db)
+) -> StreamingResponse:
     service = ChatService(wrapper=wrapper, db=db, registry=registry)
-    conversation_id, messages = await service.prepare(req.message, req.conversation_id, req.provider)
+    conversation_id, messages = await service.prepare(
+        req.message, req.conversation_id, req.provider
+    )
     return StreamingResponse(
         service.stream_tokens(conversation_id, messages, req.provider, req.model),
         media_type="text/event-stream",
