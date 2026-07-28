@@ -24,3 +24,7 @@ Thumbs.db
 
 # Claude Code local state
 .claude/
+
+# Internal build log / rolling handoff — local only, never published
+DECISIONS.md
+HANDOFF.md
