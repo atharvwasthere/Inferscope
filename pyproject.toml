@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inferscope"
+version = "0.1.0"
+description = "LLM observability SDK — captures latency, tokens, cost and errors from inference calls without adding latency to the request path."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Atharv Singh" }]
+keywords = ["llm", "observability", "tracing", "opentelemetry", "genai"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Monitoring",
+]
+
+# Deliberately empty. The package is currently pure-stdlib (contextvars, re, json,
+# dataclasses). The HTTP transport lands in T2 and brings the first real dep.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/atharvwasthere/Inferscope"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inferscope"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E,F  pyflakes/pycodestyle   I  import order      UP  pyupgrade
+# B    bugbear (mutable defaults, except-pass)     SIM simplify
+# RET  early returns (Gate 4)                      ARG unused args (Gate 0)
+select = ["E", "F", "I", "UP", "B", "SIM", "RET", "ARG"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/*" = ["ARG"]
+
+[tool.ruff.lint.isort]
+# backend/ modules reach Python via sys.path (conftest.py / PYTHONPATH), not an
+# install, so ruff would otherwise sort them into the third-party block.
+known-first-party = [
+  "inferscope",
+  "chatbot",
+  "ingestion",
+  "dashboard",
+  "obs",
+  "redis_bus",
+  "sdk",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# `Depends(...)`/`Query(...)` in a parameter default IS the FastAPI idiom, not the
+# mutable-default bug B008 exists to catch. Without this the gate reports a false
+# positive on every route handler, which is how a quality gate gets ignored.
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Path",
+  "fastapi.Body",
+  "fastapi.Header",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+# The package claims py.typed, so it must actually type-check strictly.
+[[tool.mypy.overrides]]
+module = "inferscope.*"
+disallow_untyped_defs = true
+warn_return_any = true
+
+# These ship no stubs and no py.typed. Reporting that on every run is noise, not signal.
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "aioboto3.*", "groq.*", "google.*", "redis.*", "alembic.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]

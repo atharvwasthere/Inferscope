@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 
-from obs.trace import get_trace_id
+from inferscope.trace import get_trace_id
 
 
 class JsonFormatter(logging.Formatter):

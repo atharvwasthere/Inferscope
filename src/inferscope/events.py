@@ -31,7 +31,7 @@ class InferenceEvent:
     trace_id: str | None = None
 
     @classmethod
-    def from_log(cls, log: dict) -> "InferenceEvent":
+    def from_log(cls, log: dict) -> InferenceEvent:
         return cls(
             payload=log,
             request_id=str(log.get("request_id")),
@@ -46,7 +46,7 @@ class InferenceEvent:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "InferenceEvent":
+    def from_dict(cls, data: dict) -> InferenceEvent:
         return cls(
             payload=data["payload"],
             request_id=data["request_id"],
@@ -57,7 +57,7 @@ class InferenceEvent:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def deserialize(cls, raw: str) -> "InferenceEvent":
+    def deserialize(cls, raw: str) -> InferenceEvent:
         return cls.from_dict(json.loads(raw))
 
 

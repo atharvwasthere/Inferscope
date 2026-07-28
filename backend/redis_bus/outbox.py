@@ -14,7 +14,7 @@ from uuid import UUID
 
 import asyncpg
 
-from obs.events import InferenceEvent
+from inferscope.events import InferenceEvent
 
 
 async def insert(pool: asyncpg.Pool, event: InferenceEvent) -> None:
@@ -29,7 +29,9 @@ async def insert(pool: asyncpg.Pool, event: InferenceEvent) -> None:
     )
 
 
-async def fetch_unprocessed(pool: asyncpg.Pool, limit: int = 50) -> list[tuple[UUID, InferenceEvent]]:
+async def fetch_unprocessed(
+    pool: asyncpg.Pool, limit: int = 50
+) -> list[tuple[UUID, InferenceEvent]]:
     rows = await pool.fetch(
         """
         SELECT id, request_id, trace_id, payload

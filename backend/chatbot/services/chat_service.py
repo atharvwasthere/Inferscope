@@ -1,9 +1,10 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
+from collections.abc import AsyncGenerator
 from uuid import UUID, uuid4
-from typing import AsyncGenerator
 
 import asyncpg
 from fastapi import HTTPException
@@ -18,10 +19,9 @@ from chatbot.db import (
     update_conversation_title,
 )
 from chatbot.services.title_service import TitleService
+from inferscope.pii_tokenizer import PiiTokenizer
 from obs.log import get_logger, log_with
-from sdk.pii_tokenizer import PiiTokenizer
 from sdk.wrapper import LLMWrapper
-
 
 logger = get_logger("chatbot.chat_service")
 
@@ -148,10 +148,8 @@ class ChatService:
             # Close provider socket — stops the provider from generating (and billing)
             # additional tokens once we've abandoned the stream.
             if gen is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await gen.aclose()
-                except Exception:
-                    pass
             self.registry.unregister(stream_id)
 
             reply = "".join(collected)
@@ -168,10 +166,13 @@ class ChatService:
                 {"conversation_id": str(conversation_id), "status": status},
             )
 
-    async def _update_title(self, conversation_id: UUID, tokenized_user: str, assistant_reply: str) -> None:
+    async def _update_title(
+        self, conversation_id: UUID, tokenized_user: str, assistant_reply: str
+    ) -> None:
         """Background task: generate a topic title and persist it. Never breaks the chat path."""
         try:
-            # tokenize the assistant reply too — defense in depth so the title model sees no raw PII
+            # tokenize the assistant reply too — defense in depth so the title model
+            # sees no raw PII
             tok_assistant, _ = self.tokenizer.tokenize(assistant_reply)
             title = await self.title_service.generate_title(tokenized_user, tok_assistant)
             # the request-scoped connection is gone by now — acquire a fresh one from the pool
@@ -189,7 +190,9 @@ class ChatService:
                 error=f"{type(e).__name__}: {e}",
             )
 
-    async def _resolve_conversation(self, tokenized_message: str, conversation_id: UUID | None) -> UUID:
+    async def _resolve_conversation(
+        self, tokenized_message: str, conversation_id: UUID | None
+    ) -> UUID:
         if conversation_id is None:
             # tokenized text is already PII-free; truncation may clip a token but never leaks PII
             title = tokenized_message[:50]

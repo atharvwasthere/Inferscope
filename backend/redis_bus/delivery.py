@@ -16,8 +16,8 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from obs.events import InferenceEvent
-from obs.trace import TRACE_HEADER
+from inferscope.events import InferenceEvent
+from inferscope.trace import TRACE_HEADER
 
 
 class DeliveryOutcome(Enum):
@@ -36,14 +36,18 @@ class _Transient(Exception):
     wait=wait_exponential_jitter(initial=0.1, max=2.0),
     retry=retry_if_exception_type((httpx.HTTPError, _Transient)),
 )
-async def _post(client: httpx.AsyncClient, url: str, payload: dict, headers: dict) -> httpx.Response:
+async def _post(
+    client: httpx.AsyncClient, url: str, payload: dict, headers: dict
+) -> httpx.Response:
     response = await client.post(url, json=payload, headers=headers)
     if response.status_code >= 500:
         raise _Transient(f"ingestion returned {response.status_code}")
     return response
 
 
-async def deliver(client: httpx.AsyncClient, ingestion_url: str, event: InferenceEvent) -> DeliveryOutcome:
+async def deliver(
+    client: httpx.AsyncClient, ingestion_url: str, event: InferenceEvent
+) -> DeliveryOutcome:
     """POST one event to ingestion and classify the result. Never raises."""
     headers = {TRACE_HEADER: event.trace_id} if event.trace_id else {}
     try:

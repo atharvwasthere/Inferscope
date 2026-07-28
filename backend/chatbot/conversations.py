@@ -9,7 +9,7 @@ from chatbot.db import (
     get_db,
     mark_closed,
 )
-from sdk.pii_tokenizer import PiiTokenizer
+from inferscope.pii_tokenizer import PiiTokenizer
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -33,7 +33,9 @@ async def list_conversations(db: asyncpg.Connection = Depends(get_db)) -> list[d
 
 
 @router.get("/{conversation_id}/messages")
-async def get_messages(conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)) -> list[dict]:
+async def get_messages(
+    conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)
+) -> list[dict]:
     rows = await get_conversation_messages(db, conversation_id)
     return [
         {
@@ -46,7 +48,9 @@ async def get_messages(conversation_id: UUID, db: asyncpg.Connection = Depends(g
 
 
 @router.patch("/{conversation_id}/close")
-async def close_conversation(conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)) -> dict:
+async def close_conversation(
+    conversation_id: UUID, db: asyncpg.Connection = Depends(get_db)
+) -> dict:
     """Soft-lock the conversation: future sends to this id return 409.
     Does not abort an in-flight stream — use POST /streams/{stream_id}/abort for that."""
     result = await mark_closed(db, conversation_id)

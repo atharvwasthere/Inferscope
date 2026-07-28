@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import asyncpg
 import httpx
 
+from inferscope.trace import set_trace_id
 from obs.log import get_logger, log_with
-from obs.trace import set_trace_id
 from redis_bus import outbox
 from redis_bus.delivery import DeliveryOutcome, deliver
 

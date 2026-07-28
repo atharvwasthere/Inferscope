@@ -2,7 +2,7 @@
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from obs.trace import TRACE_HEADER, new_trace_id, trace_id_var
+from inferscope.trace import TRACE_HEADER, new_trace_id, trace_id_var
 
 
 class TraceIdMiddleware(BaseHTTPMiddleware):

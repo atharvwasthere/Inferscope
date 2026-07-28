@@ -1,18 +1,17 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
-from typing import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from obs.events import InferenceEvent, Publisher
+from inferscope.events import InferenceEvent, Publisher
+from inferscope.trace import get_trace_id
 from obs.log import get_logger, log_with
-from obs.trace import get_trace_id
 from sdk.providers import ProviderResult, Usage
 from sdk.providers.bedrock import call_bedrock, stream_bedrock
 from sdk.providers.gemini import call_gemini, stream_gemini
 from sdk.providers.groq import call_groq, stream_groq
-
 
 logger = get_logger("sdk.wrapper")
 
@@ -82,7 +81,7 @@ class LLMWrapper:
         session_id: UUID | None,
         request_id: UUID,
     ) -> str:
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         start = time.perf_counter()
         try:
             result: ProviderResult = await call_fn(messages, model)
@@ -112,7 +111,7 @@ class LLMWrapper:
         session_id: UUID | None,
         request_id: UUID,
     ) -> AsyncGenerator[str, None]:
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         start = time.perf_counter()
         first_token_at: float | None = None
         collected: list[str] = []

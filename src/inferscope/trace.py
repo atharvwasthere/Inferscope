@@ -2,7 +2,7 @@
 
 Pure module — contextvar + helpers only, no web framework imports.
 Safe to import from the SDK and any service. The ASGI middleware that
-populates the contextvar lives in obs.middleware.
+populates the contextvar is a server concern and stays in ``obs.middleware``.
 """
 import contextvars
 from uuid import uuid4

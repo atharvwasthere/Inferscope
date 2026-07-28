@@ -4,11 +4,10 @@ The contract the chatbot relies on: the LLM only ever sees `[PII:TYPE:N]` tokens
 the user always sees the original text, and detokenize NEVER raises (a missing key
 just leaves the token in place).
 """
-import re
 
 import pytest
 
-from sdk.pii_tokenizer import PiiTokenizer, _TOKEN_RE
+from inferscope.pii_tokenizer import _TOKEN_RE, PiiTokenizer
 
 tk = PiiTokenizer()
 

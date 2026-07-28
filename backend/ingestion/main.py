@@ -5,6 +5,7 @@ from uuid import UUID
 import asyncpg
 from fastapi import Depends, FastAPI
 
+from inferscope.redactor import redact
 from ingestion.db import (
     close_pool,
     get_db,
@@ -16,14 +17,13 @@ from ingestion.models import InferenceLogPayload
 from ingestion.pricing import compute_cost
 from obs.log import configure_logging, get_logger, log_with
 from obs.middleware import TraceIdMiddleware
-from sdk.redactor import redact
 
 configure_logging("ingestion")
 logger = get_logger("ingestion")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await init_pool()
     yield
     await close_pool()

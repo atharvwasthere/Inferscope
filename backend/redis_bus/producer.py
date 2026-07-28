@@ -15,12 +15,12 @@ chat path.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import asyncpg
 import redis.asyncio as redis
 
-from obs.events import EVENT_FIELD, STREAM_KEY, InferenceEvent, Publisher
+from inferscope.events import EVENT_FIELD, STREAM_KEY, InferenceEvent, Publisher
 from obs.log import get_logger, log_with
 from redis_bus import outbox
 
