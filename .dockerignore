@@ -1,0 +1,32 @@
+# The build context moved from ./backend to the repo root in T1 (the inferscope
+# package lives at src/ and must be reachable). Without this file every image
+# build would ship .venv (~272MB), node_modules and .git.
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.git/
+.gitignore
+.claude/
+
+frontend/
+k8s/
+scripts/
+docs/
+
+*.md
+# ...except the one pyproject.toml declares as its readme — excluding it breaks the build.
+!README.md
+
+docker-compose.yml
+Makefile
+
+.env
+*.local
+.DS_Store

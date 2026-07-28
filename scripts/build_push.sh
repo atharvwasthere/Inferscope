@@ -2,9 +2,10 @@
 # Build all four images and push them to Docker Hub.
 #
 # Prerequisite: `docker login` as the DOCKER_USER below (or pass DOCKER_USER=...).
-# The three backend services build with the `backend/` directory as context — that is
-# where sdk/, obs/, alembic/ live, which every Dockerfile COPYs. The frontend builds
-# from `frontend/`. Run from the repo root: bash scripts/build_push.sh
+# The three backend services build with the REPO ROOT as context (changed in T1) — the
+# inferscope package at src/ must be reachable alongside backend/. .dockerignore keeps
+# .venv, node_modules and .git out of that context. The frontend builds from
+# `frontend/`. Run from the repo root: bash scripts/build_push.sh
 set -euo pipefail
 
 DOCKER_USER="${DOCKER_USER:-atharv19}"
@@ -20,10 +21,10 @@ build_push() {
   docker push "${image}"
 }
 
-# backend services: context = backend/ (sdk, obs, alembic are siblings of each service dir)
-build_push ingestion "${REPO}/backend/ingestion/Dockerfile" "${REPO}/backend"
-build_push chatbot   "${REPO}/backend/chatbot/Dockerfile"   "${REPO}/backend"
-build_push dashboard "${REPO}/backend/dashboard/Dockerfile" "${REPO}/backend"
+# backend services: context = repo root (needs both src/ for the package and backend/)
+build_push ingestion "${REPO}/backend/ingestion/Dockerfile" "${REPO}"
+build_push chatbot   "${REPO}/backend/chatbot/Dockerfile"   "${REPO}"
+build_push dashboard "${REPO}/backend/dashboard/Dockerfile" "${REPO}"
 
 # frontend: context = frontend/
 build_push frontend  "${REPO}/frontend/Dockerfile"          "${REPO}/frontend"
