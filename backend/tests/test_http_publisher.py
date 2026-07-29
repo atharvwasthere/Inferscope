@@ -35,13 +35,23 @@ def test_base_url_is_required():
         HttpPublisher("")
 
 
-def test_remote_collector_requires_an_api_key():
+def test_public_collector_requires_an_api_key():
     with pytest.raises(ValueError, match="api_key is required"):
         HttpPublisher("https://collector.example.com")
 
 
-def test_local_collector_may_omit_the_api_key():
-    HttpPublisher("http://localhost:8081")  # must not raise
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://ingestion:8081",              # docker compose service name
+        "http://ingestion.default.svc.cluster.local:8081",  # k8s service DNS
+        "http://collector.internal:8081",
+    ],
+)
+def test_private_collectors_may_omit_the_api_key(url):
+    HttpPublisher(url)  # must not raise — no key adds nothing on a private network
 
 
 def test_remote_collector_with_key_is_accepted():
