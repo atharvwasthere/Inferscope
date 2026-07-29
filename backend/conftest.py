@@ -12,3 +12,5 @@ sys.path.insert(0, os.path.dirname(__file__))
 # connection — a placeholder is enough to import them. setdefault so a real
 # environment still wins.
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+# The collector fails closed without keys (T3a), so importing it needs one.
+os.environ.setdefault("INFERSCOPE_API_KEYS", "test-key")
