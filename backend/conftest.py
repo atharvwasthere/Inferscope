@@ -7,3 +7,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+
+# The service modules read DATABASE_URL at import time. Nothing here opens a
+# connection — a placeholder is enough to import them. setdefault so a real
+# environment still wins.
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
