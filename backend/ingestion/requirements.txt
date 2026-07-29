@@ -5,4 +5,4 @@ pydantic
 pydantic-settings
 python-dotenv
 httpx
-tenacity
+redis[hiredis]

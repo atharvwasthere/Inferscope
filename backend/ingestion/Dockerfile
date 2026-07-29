@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir /tmp/pkg
 
 COPY backend/sdk /app/sdk
 COPY backend/obs /app/obs
+COPY backend/redis_bus /app/redis_bus
 COPY backend/ingestion /app/ingestion
 
 ENV PYTHONPATH=/app

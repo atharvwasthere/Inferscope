@@ -22,7 +22,6 @@ RUN pip install --no-cache-dir /tmp/pkg
 
 COPY backend/sdk /app/sdk
 COPY backend/obs /app/obs
-COPY backend/redis_bus /app/redis_bus
 COPY backend/alembic /app/alembic
 COPY backend/alembic.ini /app/alembic.ini
 COPY backend/chatbot /app/chatbot
