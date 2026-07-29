@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import os
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -12,18 +10,18 @@ from pydantic import BaseModel
 
 from chatbot.abort_bus import RedisAbortBus, StreamRegistry
 from chatbot.conversations import router as conversations_router
-from chatbot.db import close_pool, get_db, get_pool, get_provider_models, init_pool
+from chatbot.db import close_pool, get_db, get_provider_models, init_pool
 from chatbot.services.chat_service import ChatService
+from inferscope import HttpPublisher
 from obs.log import configure_logging
 from obs.middleware import TraceIdMiddleware
-from redis_bus.consumer import IngestionWorker
-from redis_bus.outbox_poller import OutboxPoller
-from redis_bus.producer import RedisProducer
 
 # isolated import boundary — chatbot uses only sdk.wrapper
 from sdk.wrapper import LLMWrapper
 
-INGESTION_URL = os.environ.get("INGESTION_URL", "http://ingestion:8081/ingest")
+# Base URL, not the /ingest path — HttpPublisher owns the route it POSTs to.
+INFERSCOPE_URL = os.environ.get("INFERSCOPE_URL", "http://ingestion:8081")
+INFERSCOPE_API_KEY = os.environ.get("INFERSCOPE_API_KEY") or None
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 DEFAULT_PROVIDER = os.environ.get("DEFAULT_PROVIDER", "bedrock")
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "anthropic.claude-sonnet-4-6")
@@ -31,9 +29,12 @@ CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","
 
 configure_logging("chatbot")
 
-# Producer publishes to Redis; the wrapper depends only on the Publisher abstraction.
-producer = RedisProducer(REDIS_URL, pool_getter=get_pool)
-wrapper = LLMWrapper(publisher=producer)
+# The chatbot is now just an SDK user: it POSTs telemetry to the collector and
+# knows nothing about Redis or the outbox, which live behind that boundary. The
+# wrapper still depends only on the Publisher abstraction, so this swap needed no
+# change to it (D-009).
+publisher = HttpPublisher(INFERSCOPE_URL, INFERSCOPE_API_KEY)
+wrapper = LLMWrapper(publisher=publisher)
 
 # Stream-abort plumbing:
 #   - registry: per-process map of stream_id -> asyncio.Event (the generator polls it).
@@ -55,12 +56,7 @@ class ChatRequest(BaseModel):
 async def lifespan(_app: FastAPI):
     await init_pool()
 
-    # Two delivery drains, both reaching ingestion via inferscope.delivery:
-    #   - consumer: the Redis Streams happy path
-    #   - poller:   the Postgres outbox fallback path
-    worker = IngestionWorker(REDIS_URL, INGESTION_URL)
-    poller = OutboxPoller(get_pool, INGESTION_URL)
-    tasks = [asyncio.create_task(worker.run()), asyncio.create_task(poller.run())]
+    # The delivery drains moved into the collector (D-014) — nothing to run here.
 
     # Start the abort subscriber: every replica listens on the shared channel and
     # asks its local registry to cancel — the replica that doesn't own the stream
@@ -69,15 +65,9 @@ async def lifespan(_app: FastAPI):
 
     yield
 
-    for task in tasks:
-        task.cancel()
-    for task in tasks:
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-    await worker.close()
-    await poller.close()
+    # Flush queued telemetry before the process goes away.
+    await publisher.aclose()
     await abort_bus.close()
-    await producer.close()
     await close_pool()
 
 
