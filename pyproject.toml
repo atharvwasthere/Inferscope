@@ -19,13 +19,15 @@ classifiers = [
   "Topic :: System :: Monitoring",
 ]
 
-# Deliberately empty. The package is currently pure-stdlib (contextvars, re, json,
-# dataclasses). The HTTP transport lands in T2 and brings the first real dep.
-dependencies = []
+# One dependency, deliberately. Every entry here is imposed on whoever installs
+# inferscope, so retry/backoff is hand-rolled in delivery.py rather than pulling
+# in tenacity for ten lines of loop.
+dependencies = ["httpx>=0.27"]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
+  "pytest-asyncio>=0.24",
   "ruff>=0.6",
   "mypy>=1.11",
 ]

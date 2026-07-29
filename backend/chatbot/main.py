@@ -55,7 +55,7 @@ class ChatRequest(BaseModel):
 async def lifespan(_app: FastAPI):
     await init_pool()
 
-    # Two delivery drains, both reaching ingestion via redis_bus.delivery:
+    # Two delivery drains, both reaching ingestion via inferscope.delivery:
     #   - consumer: the Redis Streams happy path
     #   - poller:   the Postgres outbox fallback path
     worker = IngestionWorker(REDIS_URL, INGESTION_URL)
