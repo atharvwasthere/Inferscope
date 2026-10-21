@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI
 
 from inferscope.delivery import DeliveryOutcome
 from inferscope.events import InferenceEvent
+from ingestion.auth import require_api_key
 from ingestion.db import close_pool, get_db, get_pool, init_pool
 from ingestion.models import InferenceLogPayload
 from ingestion.persist import persist_event
@@ -88,7 +89,9 @@ async def ready(db: asyncpg.Connection = Depends(get_db)) -> dict:
     return {"status": "ready"}
 
 
-@app.post("/ingest", status_code=202)
+# Auth is a route dependency, not middleware, so /health and /ready stay open for
+# Kubernetes probes — which have no credentials and no reason to need any.
+@app.post("/ingest", status_code=202, dependencies=[Depends(require_api_key)])
 async def ingest(payload: InferenceLogPayload) -> dict:
     """Validate at the trust boundary, then enqueue.
 
