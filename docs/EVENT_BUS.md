@@ -3,8 +3,12 @@
 [← back to README](../README.md) · [Architecture overview](../ARCHITECTURE.md)
 
 This document explains how inference logs travel from the SDK to the database,
-why that path is an event bus rather than a direct HTTP call, and how the design
-fails safely. It is a decision record, not a tutorial.
+why that path has an event bus in it, and how the design fails safely. It is a
+decision record, not a tutorial.
+
+> **Update (21 Oct 2026):** the bus now sits *behind* the collector. The chatbot POSTs
+> events to `/ingest`; the collector puts them on the stream and its own drains persist
+> them. Sections 1 and 6 show the current shape, and section 7 explains the move.
 
 ## 1. Why event-based
 
@@ -27,20 +31,21 @@ the very place latency is least acceptable. Telemetry, which is non-critical, ca
 degrade the product, which is critical. That is backwards.
 
 An event bus inverts the dependency. The producer announces "an inference happened"
-and moves on. A separate consumer delivers it to ingestion, on its own schedule, with
-its own retries.
+and moves on. A separate consumer persists it, on its own schedule, with its own
+retries.
 
 ```
-  After (event bus):
+  Now (SDK → collector → bus):
 
   chatbot ── LLM call ──► provider
      │
-     └── publish(event) ──► [ bus ] ──► consumer ──► ingestion ──► postgres
-            (fast, fire-and-forget)        (decoupled, retries here)
+     └── publish(event) ──► SDK queue ──► POST /ingest ──► [ bus ] ──► drains ──► postgres
+            (in memory, never blocks)     (202 queued)     inside the collector
 ```
 
-The producer and consumer no longer share a lifecycle. Ingestion downtime backs up
-in the bus, not in the chat request.
+The chat request and the database no longer share a lifecycle. The SDK hands the
+event to a background queue, the collector accepts it in milliseconds, and a slow
+or down Postgres backs up in the bus, not in the chat request.
 
 ## 2. Options considered
 
@@ -75,7 +80,7 @@ in the bus, not in the chat request.
 > ensures retries never create duplicates. The two patterns are designed together.
 
 At-least-once means a message can be delivered more than once — on retry, on reclaim,
-on a consumer crash between POST and `XACK`. On its own that would double-count tokens
+on a consumer crash between the insert and `XACK`. On its own that would double-count tokens
 and cost. The ingestion table has a unique `request_id` and inserts with
 `ON CONFLICT (request_id) DO NOTHING`, so a second delivery of the same event is a
 no-op. Neither pattern is complete alone:
@@ -106,55 +111,60 @@ workload that a single Redis node serves comfortably.
 ## 6. Failure handling
 
 The happy path makes Redis a single point of failure: if `XADD` fails, the event is
-gone. So the producer has a second, durable path.
+gone. So `/ingest` has a second, durable path.
 
 ```
-                       publish(event)
-                            │
-              ┌─────────────┴──────────────┐
-       try XADD                   on ANY redis error
-              │                            │
-              ▼                            ▼
-     [ redis stream ]            INSERT outbox_events (processed = FALSE)
-              │                            │
-        XREADGROUP                  poll every 10s
-              │                            │
-              ▼                            ▼
-        IngestionWorker ──► deliver() ◄── OutboxPoller
-                              │
-                              ▼
-                         ingestion ──► inference_logs
-                              │  ON CONFLICT (request_id) DO NOTHING
-              ┌───────────────┼───────────────┐
-         2xx → done      422 → drop+warn   5xx → leave (redeliver)
-                              │
-                              ▼
-                      ✗ no DLQ — rejected payload is logged and dropped
+         SDK (chatbot) ── POST /ingest, 3 tries with backoff
+                                  │
+                                  ▼
+               collector: validate (bad payload → 422)
+                                  │
+              ┌───────────────────┴─────────────────┐
+          try XADD                         on ANY redis error
+              │                                     │
+              ▼                                     ▼
+      [ redis stream ]          INSERT outbox_events (processed = FALSE)
+              │                                     │
+         XREADGROUP                          poll every 10s
+              │                                     │
+              ▼                                     ▼
+       IngestionWorker ──► persist_event() ◄── OutboxPoller
+                                  │  ON CONFLICT (request_id) DO NOTHING
+                  ┌───────────────┼──────────────────┐
+            stored → ack   bad data → drop   DB error → retry
 ```
 
-- **Redis down / ingestion down / both down.** The producer catches the `XADD`
-  failure and writes to the `outbox_events` table instead. The `OutboxPoller` drains
-  unprocessed rows every 10 seconds and delivers them once services recover. Nothing
-  is lost while infrastructure is unavailable.
-- **No duplicated logic.** Both the Redis consumer and the outbox poller deliver
-  through the same `redis_bus.delivery.deliver` function. They differ only in where
-  the event came from; the POST, retry policy, and response classification are shared.
-- **Double delivery is safe.** If Redis recovers and redelivers an event that the
-  outbox already delivered (or vice versa), ingestion's `request_id` idempotency makes
-  the second one a no-op.
-- **The outbox is staging, not storage.** Rows are written only on the failure path
-  and marked `processed = TRUE` once delivered. A periodic job deletes processed rows
-  older than 24h (out of scope for this build).
+What each failure does today:
+
+| What is down | What happens | Event |
+|---|---|---|
+| Nothing | `XADD` → consumer persists → `XACK` | 1 row |
+| Redis | `/ingest` writes the outbox → poller persists it | 1 row |
+| Postgres | Event waits in the stream unacked → persisted when Postgres is back | 1 row, later |
+| Collector | SDK retries 3 times, then logs and drops — its queue is in memory | lost |
+| Redis **and** Postgres | Outbox write fails → logged and dropped, but `/ingest` still says `202` | lost |
+
+- **No duplicated logic.** The stream consumer and the outbox poller call the same
+  `persist_event()`. They differ only in where the event came from.
+- **Double delivery is safe.** If an event comes through both paths, or is redelivered
+  after a crash, the unique `request_id` makes the second insert a no-op.
+- **The outbox is staging, not storage.** Rows are written only on the failure path and
+  marked `processed = TRUE` once persisted. A periodic job deletes processed rows older
+  than 24h (out of scope for this build).
+- **Two gaps, written down.** The SDK has no disk spool, so a long collector outage loses
+  events. And when both Redis and Postgres are down, `/ingest` should answer `503`, not
+  `202`, so the SDK retries instead of believing the event was queued.
 
 ### The DLQ gap (documented, not built)
 
-The outbox handles **delivery** failure — Redis or ingestion being unreachable. It does
-**not** handle **rejection** failure — ingestion accepting the connection but returning
-a permanent `422` because the payload is invalid (schema drift, a bug in the producer).
-Today such an event is logged with its `request_id` and dropped:
+The outbox handles **delivery** failure — Redis or Postgres being unreachable. It does
+**not** handle **rejection** failure — a payload that is invalid (schema drift, a bug in
+the producer). `/ingest` answers such a payload with `422` and the SDK drops it; an event
+that reaches a drain and still fails validation is acked and dropped. Either way it is
+logged with its `request_id` and gone:
 
 ```
-  delivery succeeds, ingestion rejects (422)
+  the drain reads the event, persist_event() rejects it (invalid)
      → log warning with request_id
      → mark processed / XACK
      → event is gone, no way to investigate or replay
@@ -164,3 +174,25 @@ The production fix is a dead-letter queue: a `dead_letter_events` table that par
 rejected payloads instead of dropping them, so they can be inspected and replayed after
 the schema or bug is fixed. Outbox and DLQ solve different problems — infrastructure
 failure versus bad data — and only the first is in scope here.
+
+## 7. Why the bus moved behind the collector
+
+The first version ran the producer and both drains inside the chatbot. They POSTed to
+ingestion over HTTP. That meant the chatbot had to know about Redis, the outbox and the
+ingestion URL — three things an app using an observability SDK should not care about.
+
+```
+  Before:  chatbot ─► XADD ─► [ bus ] ─► drains (in chatbot) ─► POST /ingest ─► postgres
+  Now:     chatbot ─► POST /ingest ─► [ bus ] ─► drains (in collector) ─► postgres
+```
+
+- **The app knows one URL.** The chatbot is now a plain SDK user (`INFERSCOPE_URL`).
+  Swapping the transport needed no change to the wrapper, because it only depends on the
+  `Publisher` interface.
+- **Durability sits next to the database.** The drains run in the collector's lifespan,
+  beside the Postgres they write to. "Delivery" became a local function call instead of an
+  HTTP hop.
+- **Validation stays at the door.** `/ingest` still rejects a bad payload with `422` while
+  the sender is listening, instead of queueing it and dropping it later.
+- **The cost:** `202` is a promise, not a receipt. Durability now starts at the collector,
+  so the SDK's in-memory queue is the weak spot (see section 6).

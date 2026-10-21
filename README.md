@@ -2,23 +2,32 @@
 
 ## Overview
 
-inferscope is an LLM observability and inference logging platform. It sits between your application and the model providers, capturing every inference call — latency, time-to-first-token, token usage, cost, and errors — without adding meaningful latency to the request path. It ships with a multi-provider chatbot (Bedrock, Gemini, and Groq) as the reference workload, a fire-and-forget SDK that instruments calls transparently, an ingestion service that normalizes and persists logs, and a real-time dashboard for latency, throughput, error rate, and cost. It is built for teams running LLMs in production who need to answer "what did this cost, how slow was it, and why did it fail" — per request, per model, per provider.
+inferscope is an LLM observability and inference logging platform. It sits between your application and the model providers, capturing every inference call — latency, time-to-first-token, token usage, cost, and errors — without adding meaningful latency to the request path. It ships with a multi-provider chatbot (Bedrock, Gemini, and Groq) as the reference workload, a fire-and-forget SDK that instruments calls transparently, a collector (the ingestion service) that queues events on Redis Streams and persists them idempotently, and a real-time dashboard for latency, throughput, error rate, and cost. It is built for teams running LLMs in production who need to answer "what did this cost, how slow was it, and why did it fail" — per request, per model, per provider.
 
 ## Architecture
 
 ```
 frontend ──> chatbot ──> sdk/wrapper ──> LLM API (Bedrock / Gemini / Groq)
-                  │
-                  └──> ingestion ──> postgres
-                                       │
-                       dashboard ──────┘
+                              │
+                              │ POST /ingest   (SDK queue — never blocks the chat)
+                              ▼
+                      ingestion (collector)
+                              │ validate → 202 queued
+                              ▼
+                        redis stream ──(redis down)──> outbox_events
+                              │                              │
+                              └── drains: redact → price → insert ──> postgres
+                                                                         │
+                                               dashboard ────────────────┘
 ```
 
 - **frontend** — React UI: streaming chat, conversation history, metrics dashboard.
 - **chatbot** — FastAPI service owning conversation state and multi-turn context; calls the SDK.
-- **sdk/wrapper** — provider-agnostic interceptor: measures the call, fires a log, returns the result untouched.
-- **ingestion** — validates, redacts PII, computes cost, and persists logs idempotently.
+- **sdk/wrapper** — provider-agnostic interceptor: measures the call, hands the event to the SDK publisher, returns the result untouched.
+- **inferscope SDK** (`src/inferscope`) — installable package. `HttpPublisher` queues events in memory and POSTs them to the collector with retry; it never blocks or raises.
+- **ingestion (collector)** — `POST /ingest` validates and answers `202 queued` after putting the event on a Redis Stream (or the Postgres outbox if Redis is down). Two drains run inside it — the stream consumer and the outbox poller — and redact PII, compute cost, and insert idempotently.
 - **dashboard** — read-only aggregation API over the inference log table.
+- **redis** — the event stream behind the collector, plus pub/sub for "stop generating" across chatbot replicas.
 - **postgres** — single source of truth for conversations, messages, logs, and pricing.
 
 The codebase follows SOLID principles and Clean Architecture boundaries. Each service uses the **Service/Repository pattern** — route handlers stay thin, a service layer orchestrates flow, and a repository layer (`db.py`) is the only place that touches SQL. Providers follow the **Provider pattern** behind a registry, so adding a model vendor is one dictionary entry and a new file, with zero changes to the wrapper.
@@ -31,17 +40,18 @@ The inference log schema borrows the vocabulary of [OpenTelemetry's GenAI semant
 inferscope/
 ├── backend/              # Python services — one shared codebase, three FastAPI apps
 │   ├── chatbot/          # chat, conversations, SSE streaming, LLM-generated titles
-│   ├── ingestion/        # validate → redact → price → persist (idempotent)
+│   ├── ingestion/        # the collector: /ingest accepts into Redis; drains redact → price → persist
 │   ├── dashboard/        # read-only metrics aggregation
-│   ├── sdk/              # provider-agnostic wrapper + providers/ + PII tokenizer/redactor
-│   ├── redis_bus/        # Redis Streams producer/consumer + Postgres outbox fallback
+│   ├── sdk/              # provider-agnostic wrapper + providers/
+│   ├── redis_bus/        # Redis Streams producer/consumer + outbox fallback (run inside ingestion)
 │   ├── obs/              # structured JSON logging + trace-id propagation
 │   ├── alembic/          # migrations (single 0001 baseline)
 │   ├── alembic.ini
 │   └── .env.example
+├── src/inferscope/       # installable SDK: HttpPublisher, delivery/retry, PII tokenizer + redactor, trace
 ├── frontend/             # React 19 + Vite + TanStack Query
 ├── docs/                 # deep dives — EVENT_BUS.md, PII.md, SCHEMA.md
-├── k8s/                  # Kubernetes (Minikube) manifests
+├── k8s/                  # Kubernetes manifests (k3s)
 ├── ARCHITECTURE.md       # architecture notes (pipeline, scaling, failure handling)
 ├── docker-compose.yml
 ├── Makefile
@@ -70,9 +80,10 @@ docker compose up --build
 
 | Service | Language / Framework | Key Libraries |
 |---|---|---|
-| chatbot | Python / FastAPI | aioboto3, google-genai, groq, asyncpg, tenacity, redis |
-| event bus | Redis Streams | redis:7-alpine (AOF) + Postgres outbox fallback |
-| ingestion | Python / FastAPI | asyncpg, pydantic, tenacity |
+| chatbot | Python / FastAPI | aioboto3, google-genai, groq, asyncpg, redis, inferscope SDK |
+| SDK | Python package | httpx (retry with backoff is ten lines of our own, no tenacity) |
+| event bus | Redis Streams behind the collector | redis:7-alpine (AOF) + Postgres outbox fallback |
+| ingestion | Python / FastAPI | asyncpg, pydantic, redis |
 | dashboard | Python / FastAPI | asyncpg |
 | frontend | React 19 | Vite, TanStack Query v5, recharts |
 | database | PostgreSQL 16 | Alembic migrations |
@@ -104,8 +115,9 @@ depends on.
 ## Tradeoffs Made
 
 **Event bus: Redis Streams + Postgres outbox fallback** (see [docs/EVENT_BUS.md](./docs/EVENT_BUS.md))
-- *Decision:* the SDK publishes each inference event to a Redis Stream (`XADD`); a consumer group worker drains it (`XREADGROUP`/`XACK`) and POSTs to ingestion with retry. If Redis is unreachable, the producer falls back to an `outbox_events` table that a poller drains when services recover.
-- *Why:* decouples the chat path from ingestion availability, survives process/Redis restarts (AOF persistence), supports horizontal workers via consumer groups, and gives at-least-once delivery. Paired with `request_id` `ON CONFLICT DO NOTHING` so redelivery never duplicates.
+- *Decision:* the SDK POSTs each inference event to the collector. `/ingest` validates it, puts it on a Redis Stream (`XADD`) and answers `202 queued`. A consumer group inside the collector drains the stream (`XREADGROUP`/`XACK`) and persists. If Redis is unreachable, `/ingest` writes the event to an `outbox_events` table instead, and a poller drains it.
+- *Why:* the chatbot only needs to know one URL — Redis and the outbox live behind the collector. The stream survives restarts (AOF), consumer groups let ingestion replicas share the work, and delivery is at-least-once. Paired with `request_id` `ON CONFLICT DO NOTHING` so redelivery never duplicates.
+- *Note:* `202` means *queued*, not *stored*. If the collector itself is down, the SDK retries 3 times and then drops the event — its queue is in memory. See [EVENT_BUS.md](./docs/EVENT_BUS.md#6-failure-handling).
 - *Production:* graduate to Kafka when throughput exceeds a single Redis node or multiple independent consumer groups are needed. Add a `dead_letter_events` table for permanently-rejected (422) payloads — see the DLQ note below.
 
 **Failure handling: outbox vs DLQ**
@@ -156,10 +168,10 @@ depends on.
 - *Why:* a circuit breaker guards against cascading failure under load; a bulkhead stops a slow provider starving a fast one. Neither has an observable effect with a single user.
 - *Production:* a per-provider `asyncio.Semaphore` bulkhead (~5 lines) and a circuit breaker with a failure threshold and timeout window wrapping the `PROVIDERS` registry.
 
-**K8s: Minikube vs cloud cluster**
-- *Decision:* Minikube.
-- *Why:* a self-hosted, local cluster the evaluator can run without cloud access. The manifests are cloud-agnostic.
-- *Production:* the same manifests targeting EKS/GKE — change `imagePullPolicy`, add an Ingress with TLS, and add an HPA on ingestion.
+**K8s: Minikube vs self-hosted k3s vs managed**
+- *Decision:* self-hosted **k3s** on one Azure VM. (It started on Minikube for local dev.)
+- *Why:* the brief asked for self-hosted Kubernetes on a small budget. k3s is certified Kubernetes in one binary — containerd, Traefik and local-path storage built in — so the same manifests run on EKS/AKS. Minikube hid real gaps (images living in its Docker daemon, `localhost` meaning the container, no migration step); a real node exposed them.
+- *Production:* managed EKS/AKS for HA and upgrades, a StatefulSet for Postgres, immutable image tags, and an HPA on ingestion.
 
 ## Production Patterns Implemented
 
@@ -183,7 +195,6 @@ depends on.
 - Time-based partitioning on `inference_logs` by month.
 - Per-user cost attribution and budget alerting.
 - Alembic autogenerate — migrations are currently hand-written on purpose, since the services use asyncpg directly and no SQLAlchemy ORM models exist to diff against.
-- Ingress with TLS on k8s instead of NodePort.
 - HPA on the ingestion service for burst traffic.
 
 ## Deployment
@@ -205,7 +216,8 @@ nginx reverse-proxy / 12-factor reasoning — in **[DEPLOYMENT.md](./DEPLOYMENT.
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string |
-| `INGESTION_URL` | yes | Ingestion service URL |
+| `INFERSCOPE_URL` | yes | Collector base URL — the SDK POSTs to `<url>/ingest` (e.g. `http://ingestion:8081`) |
+| `INFERSCOPE_API_KEY` | no | Bearer token the SDK sends. Required by the SDK only when the collector URL is public |
 | `REDIS_URL` | yes | Event-bus Redis URL (`redis://redis:6379`; local: `redis://localhost:6379`) |
 | `AWS_REGION` | yes | Bedrock region |
 | `AWS_ACCESS_KEY_ID` | yes | AWS credentials |

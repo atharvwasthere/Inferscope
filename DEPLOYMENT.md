@@ -24,7 +24,7 @@ docker compose up --build
 
 **How config works.** Each backend service loads `env_file: backend/.env`, then `docker-compose.yml`
 applies an `environment:` block that **overrides** the hostname-bearing vars (`DATABASE_URL`,
-`REDIS_URL`, `INGESTION_URL`). Compose precedence is `environment:` > `env_file:`, so your local
+`REDIS_URL`, `INFERSCOPE_URL`). Compose precedence is `environment:` > `env_file:`, so your local
 `.env` (which points at `localhost` for non-docker runs) is left untouched while the containers get
 the right **service names** (`postgres`, `redis`, `ingestion`). Inside a container `localhost` is the
 container itself — using it for the DB/Redis is the classic mistake this override prevents.
