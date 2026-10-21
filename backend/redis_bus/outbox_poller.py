@@ -1,10 +1,10 @@
-"""Outbox poller — drains the Postgres fallback table to ingestion.
+"""Outbox poller — drains the Postgres fallback table into the collector's handler.
 
-Runs as a background task inside the chatbot lifespan. Every ``interval_s`` it
-pulls a batch of unprocessed rows and delivers them through the same
-``delivery.deliver`` path the Redis consumer uses, so there is no duplicated
-delivery logic. Idempotency at ingestion makes a double-delivery (Redis recovered
-*and* outbox fired) harmless.
+Runs as a background task inside the ingestion lifespan. Every ``interval_s`` it
+pulls a batch of unprocessed rows and passes them to the same ``EventHandler``
+the Redis consumer uses, so there is no duplicated persist logic. Idempotency
+(request_id UNIQUE + ON CONFLICT DO NOTHING) makes a double-delivery — Redis
+recovered *and* the outbox fired — harmless.
 """
 from __future__ import annotations
 
@@ -13,12 +13,11 @@ import logging
 from collections.abc import Callable
 
 import asyncpg
-import httpx
 
-from inferscope.delivery import DeliveryOutcome, deliver
+from inferscope.delivery import DeliveryOutcome
 from inferscope.trace import set_trace_id
 from obs.log import get_logger, log_with
-from redis_bus import outbox
+from redis_bus import EventHandler, outbox
 
 logger = get_logger("redis_bus.outbox_poller")
 
@@ -29,15 +28,14 @@ class OutboxPoller:
     def __init__(
         self,
         pool_getter: PoolGetter,
-        ingestion_url: str,
+        handler: EventHandler,
         interval_s: int = 10,
         batch: int = 50,
     ) -> None:
         self._pool_getter = pool_getter
-        self._ingestion_url = ingestion_url
+        self._handler = handler
         self._interval_s = interval_s
         self._batch = batch
-        self._client = httpx.AsyncClient(timeout=5.0)
 
     async def run(self) -> None:
         log_with(logger, logging.INFO, "outbox poller started", interval_s=self._interval_s)
@@ -56,11 +54,11 @@ class OutboxPoller:
         for outbox_id, event in rows:
             if event.trace_id:
                 set_trace_id(event.trace_id)
-            outcome = await deliver(self._client, self._ingestion_url, event)
+            outcome = await self._handler(event)
             if outcome is DeliveryOutcome.DELIVERED:
                 await outbox.mark_processed(pool, outbox_id)
             elif outcome is DeliveryOutcome.REJECTED:
-                log_with(logger, logging.WARNING, "ingestion rejected outbox event (dropped)",
+                log_with(logger, logging.WARNING, "collector rejected outbox event (dropped)",
                          request_id=event.request_id)
                 await outbox.mark_processed(pool, outbox_id)
             else:  # FAILED — leave processed=FALSE, retry next cycle
@@ -68,4 +66,4 @@ class OutboxPoller:
                          request_id=event.request_id)
 
     async def close(self) -> None:
-        await self._client.aclose()
+        """No resources of its own — the pool and handler are owned by the caller."""

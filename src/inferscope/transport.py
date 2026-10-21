@@ -32,15 +32,27 @@ from inferscope.events import InferenceEvent, Publisher
 
 logger = logging.getLogger("inferscope.transport")
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+_LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+_PRIVATE_SUFFIXES = (".local", ".internal")
 
 DEFAULT_QUEUE_SIZE = 1000
 DEFAULT_CONCURRENCY = 8
 DEFAULT_TIMEOUT = 5.0
 
 
-def _is_local(url: str) -> bool:
-    return (urlparse(url).hostname or "") in _LOCAL_HOSTS
+def _is_private(url: str) -> bool:
+    """Is this collector on a network where an API key adds nothing?
+
+    Loopback, obviously. Also any single-label hostname: `http://ingestion:8081`
+    is a Docker Compose service or a Kubernetes service name, reachable only from
+    inside that network. A public collector is always a FQDN, so requiring a key
+    for dotted hosts and not for single-label ones splits the two correctly
+    without needing a separate "trust this" flag.
+    """
+    host = (urlparse(url).hostname or "").lower()
+    if host in _LOOPBACK or "." not in host:
+        return True
+    return host.endswith(_PRIVATE_SUFFIXES)  # incl. *.svc.cluster.local
 
 
 class HttpPublisher(Publisher):
@@ -51,9 +63,10 @@ class HttpPublisher(Publisher):
     URL is a configuration error worth failing loudly on rather than silently
     dropping telemetry into the void.
 
-    ``api_key`` may be omitted for a local collector. Pointing at a remote host
-    without one is refused — that combination is almost always a mistake, and
-    the failure would otherwise surface as 401s buried in a background task.
+    ``api_key`` may be omitted for a loopback or private-network collector.
+    Pointing at a public host without one is refused — that combination is almost
+    always a mistake, and the failure would otherwise surface as 401s buried in a
+    background task.
     """
 
     def __init__(
@@ -71,10 +84,10 @@ class HttpPublisher(Publisher):
                 "inferscope: base_url is required (e.g. http://localhost:8081). "
                 "There is no hosted default — inferscope is self-hosted."
             )
-        if api_key is None and not _is_local(base_url):
+        if api_key is None and not _is_private(base_url):
             raise ValueError(
-                f"inferscope: api_key is required for a non-local collector ({base_url}). "
-                "Omit it only when pointing at localhost."
+                f"inferscope: api_key is required for a public collector ({base_url}). "
+                "It may be omitted only for loopback or private-network hosts."
             )
 
         self._url = base_url.rstrip("/") + "/ingest"

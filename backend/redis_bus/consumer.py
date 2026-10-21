@@ -1,9 +1,9 @@
-"""Redis Streams consumer — drains the stream and delivers to ingestion.
+"""Redis Streams consumer — drains the stream into the collector's handler.
 
-Runs as a background task inside the chatbot lifespan. Uses a consumer group so
+Runs as a background task inside the ingestion lifespan. Uses a consumer group so
 the work can be parallelised across replicas, and XAUTOCLAIM so messages stranded
-by a crashed worker are reclaimed. Delivery itself lives in ``delivery.deliver``
-(shared with the outbox poller).
+by a crashed worker are reclaimed. What happens to a drained event is the caller's
+``EventHandler`` (a local persist), so this class owns stream mechanics only.
 """
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ import asyncio
 import logging
 import socket
 
-import httpx
 import redis.asyncio as redis
 from redis.exceptions import ResponseError
 
-from inferscope.delivery import DeliveryOutcome, deliver
+from inferscope.delivery import DeliveryOutcome
 from inferscope.events import CONSUMER_GROUP, EVENT_FIELD, STREAM_KEY, InferenceEvent
 from inferscope.trace import set_trace_id
 from obs.log import get_logger, log_with
+from redis_bus import EventHandler
 
 logger = get_logger("redis_bus.consumer")
 
@@ -29,7 +29,7 @@ class IngestionWorker:
     def __init__(
         self,
         redis_url: str,
-        ingestion_url: str,
+        handler: EventHandler,
         group: str = CONSUMER_GROUP,
         consumer: str | None = None,
         stream_key: str = STREAM_KEY,
@@ -37,8 +37,7 @@ class IngestionWorker:
         block_ms: int = 2000,
     ) -> None:
         self._redis = redis.from_url(redis_url, decode_responses=True)
-        self._client = httpx.AsyncClient(timeout=5.0)
-        self._ingestion_url = ingestion_url
+        self._handler = handler
         self._group = group
         self._consumer = consumer or socket.gethostname()
         self._stream_key = stream_key
@@ -86,7 +85,7 @@ class IngestionWorker:
         if event.trace_id:
             set_trace_id(event.trace_id)
 
-        outcome = await deliver(self._client, self._ingestion_url, event)
+        outcome = await self._handler(event)
         if outcome is DeliveryOutcome.DELIVERED:
             await self._redis.xack(self._stream_key, self._group, msg_id)
         elif outcome is DeliveryOutcome.REJECTED:
@@ -98,5 +97,4 @@ class IngestionWorker:
                      request_id=event.request_id)
 
     async def close(self) -> None:
-        await self._client.aclose()
         await self._redis.aclose()

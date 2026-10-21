@@ -1,6 +1,6 @@
 import json
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from uuid import UUID
 
 import asyncpg
@@ -33,13 +33,20 @@ async def close_pool() -> None:
         _pool = None
 
 
+def get_pool() -> asyncpg.Pool | None:
+    """The pool itself, for callers outside a request scope (the drains, the outbox)."""
+    return _pool
+
+
 async def get_db() -> AsyncGenerator[asyncpg.Connection, None]:
     assert _pool is not None, "pool not initialized"
     async with _pool.acquire() as conn:
         yield conn
 
 
-async def get_provider_rates(db: asyncpg.Connection, provider: str, model: str) -> tuple[float, float] | None:
+async def get_provider_rates(
+    db: asyncpg.Connection, provider: str, model: str
+) -> tuple[float, float] | None:
     row = await db.fetchrow(
         """
         SELECT cost_per_input_token, cost_per_output_token

@@ -40,9 +40,10 @@ services:
     environment:
       DATABASE_URL: postgresql://llmobs:llmobs@postgres:5432/llmobs
       REDIS_URL: redis://redis:6379
-      INGESTION_URL: http://ingestion:8081/ingest
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health')"]
@@ -60,7 +61,7 @@ services:
     environment:
       DATABASE_URL: postgresql://llmobs:llmobs@postgres:5432/llmobs
       REDIS_URL: redis://redis:6379
-      INGESTION_URL: http://ingestion:8081/ingest
+      INFERSCOPE_URL: http://ingestion:8081
     depends_on:
       postgres:
         condition: service_healthy
