@@ -88,6 +88,8 @@ The dashboard's one endpoint with teeth is latency: p50/p95 via Postgres `percen
 
 ## Data-Flow
 
+> **Update, Oct 2026:** this is the July layout, where the chatbot ran `XADD` and the drains itself. The bus has since moved behind the collector — see [the update at the end](#update-the-bus-moved-behind-the-collector).
+
 A single chat request, end to end, happy path:
 
 ```
@@ -204,7 +206,7 @@ A poller drains `outbox_events` every 10 seconds through the *same* `deliver()` 
 
 The part I'm proud of is that it composes with the idempotency constraint I'd already added. At-least-once delivery means an event can arrive twice — on retry, on reclaim, on a crash between POST and `XACK`. On its own that double-counts tokens and cost. The unique `request_id` with `ON CONFLICT DO NOTHING` makes the duplicate a no-op. At-least-once delivery **plus** an idempotent consumer equals **effectively-once processing** — the precise phrase, and explicitly *not* "exactly-once delivery," which is impossible in a distributed system. Saying "effectively-once processing" in an interview is the difference between someone who read the words and someone who understands them.
 
-I tested all three failure modes against a real running stack:
+I tested all three failure modes against a real running stack (on the July layout — the current behaviour is in [EVENT_BUS.md](./docs/EVENT_BUS.md#6-failure-handling)):
 
 ```
 Redis up,   ingestion up    → XADD → consumer → XACK             → 1 row
@@ -324,3 +326,19 @@ The pattern is the point: in every case the cheap, simple choice was correct *at
 It runs at a real URL, on a real VM, behind real TLS, with 130 passing tests and a deploy reproducible from files. The cost numbers are correct because the price table and the model dropdown are the same table. The PII never reaches the model. The logging cannot take down the chat.
 
 It also still has a placeholder Gemini rate, no dead-letter queue for permanently-rejected payloads, and a `pii_map` I'd encrypt before it went near anyone's real inbox. A senior engineer reading this repo will find those gaps in about ten minutes. The bet is that they'll also find the reasoning that put everything *else* where it is — and that on a real system, the second read is the one that matters more than the first.
+
+---
+
+## Update: the bus moved behind the collector
+
+In October I moved the Redis pipeline out of the chatbot and behind `/ingest`. The chatbot used to `XADD` to the stream and run both drains, which then POSTed to ingestion. That made an app *using* an observability SDK know about Redis, an outbox table and an ingestion URL. That's backwards.
+
+```
+before:  chatbot ─► XADD ─► [ stream ] ─► drains (in chatbot) ─► POST /ingest ─► postgres
+now:     chatbot ─► POST /ingest ─► [ stream ] ─► drains (in collector) ─► postgres
+```
+
+Now the chatbot knows one URL. The SDK puts each event on an in-memory queue and a background task POSTs it to the collector with retry. `/ingest` validates, puts it on the stream (or the outbox if Redis is down) and answers `202 queued`. The drains run inside the collector, next to the database they write to, so "delivery" became a function call instead of an HTTP hop. The wrapper didn't change at all — it only ever depended on the `Publisher` interface.
+
+The honest cost: `202` is a promise, not a receipt. Durability now starts at the collector, so if the collector is down longer than the SDK's three retries, events are dropped — the queue is in memory. And there's a gap I found while writing this up: if Redis *and* Postgres are both down, the outbox write fails too, the event is dropped, and `/ingest` still answers `202`. It should answer `503` so the SDK retries. Both are written down in [EVENT_BUS.md](./docs/EVENT_BUS.md#6-failure-handling).
+
